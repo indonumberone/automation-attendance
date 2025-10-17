@@ -1,38 +1,14 @@
 import axios from "axios";
 import { URL_ETHOL } from "../utils/url.js";
 import { SEMESTER } from "../utils/account.js";
-import fs from "fs";
 
 export class Jadwal {
   constructor() {
     this.hakAktif = "mahasiswa";
-    this.filename = "jadwal.json";
+    this.data = [];
   }
 
-  parseJadwal() {
-    try {
-      const raw = fs.readFileSync("jadwal.json", "utf-8");
-      const data = JSON.parse(raw);
-      const hasil = data.map((item) => ({
-        nomor: item.nomor,
-        jenisSchema: item.jenisSchema,
-      }));
-      return hasil;
-    } catch (err) {
-      console.error("Gagal parsing jadwal:", err);
-      return [];
-    }
-  }
-  saveJadwalToFile(data, filename = this.filename) {
-    try {
-      fs.writeFileSync(filename, JSON.stringify(data, null, 2));
-      console.log(`Jadwal berhasil disimpan ke ${filename}`);
-    } catch (err) {
-      console.error("Gagal menyimpan jadwal:", err);
-    }
-  }
-
-  getJadwal = async (ST, Token) => {
+  #getMatkul = async (ST, Token) => {
     try {
       const res = await axios.get(`${URL_ETHOL}/api/kuliah`, {
         params: {
@@ -46,8 +22,7 @@ export class Jadwal {
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
           Accept: "application/json, text/plain, */*",
           Dnt: 1,
-          "Sec-Ch-Ua":
-            '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"',
+          "Sec-Ch-Ua": '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"',
           "Sec-Ch-Ua-Mobile": "?0",
           Token: Token,
           "Sec-Fetch-Site": "same-origin",
@@ -55,7 +30,6 @@ export class Jadwal {
           "Sec-Fetch-Dest": "empty",
         },
       });
-      fs.writeFileSync(this.filename, JSON.stringify(res.data, null, 2));
       return res.data;
     } catch (error) {
       console.error("Error getJadwal:", error.message);
@@ -63,16 +37,12 @@ export class Jadwal {
     }
   };
 
-  getJadwalHarian = async (ST, Token) => {
+  #getJadwal = async (ST, Token, matkul) => {
     try {
-      const kuliahs = this.parseJadwal();
-      if (kuliahs.length === 0) {
-        throw new Error("Jadwal kosong, silakan ambil jadwal terlebih dahulu.");
-      }
       const res = await axios.post(
         `${URL_ETHOL}/api/kuliah/hari-kuliah-in`,
         {
-          kuliahs: kuliahs,
+          kuliahs: matkul,
           tahun: new Date().getFullYear(),
           semester: SEMESTER,
         },
@@ -84,8 +54,7 @@ export class Jadwal {
               "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
             Accept: "application/json, text/plain, */*",
             Dnt: 1,
-            "Sec-Ch-Ua":
-              '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"',
+            "Sec-Ch-Ua": '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"',
             "Sec-Ch-Ua-Mobile": "?0",
             Token: Token,
             "Sec-Fetch-Site": "same-origin",
@@ -94,41 +63,36 @@ export class Jadwal {
           },
         }
       );
+
       return res.data;
     } catch (error) {
       console.error("Error getJadwalHarian:", error.message);
       throw error;
     }
   };
-  mergeJadwal = async (ST, Token) => {
+
+  populate = async (ST, Token) => {
     try {
-      const jadwal = await this.getJadwal(ST, Token);
-      const jadwalHarian = await this.getJadwalHarian(ST, Token);
-      const merged = jadwal.map((matkul) => {
-        const harian = jadwalHarian.find((h) => h.kuliah === matkul.nomor);
+      const matkul = await this.#getMatkul(ST, Token);
+      if (matkul.length === 0) {
+        throw new Error("Matkul kosong, silakan ambil jadwal terlebih dahulu.");
+      }
+
+      const jadwal = await this.#getJadwal(ST, Token, matkul);
+      const merged = matkul.map((m) => {
+        const harian = jadwal.find((j) => j.kuliah === m.nomor);
         return {
-          ...matkul,
+          ...m,
           hari: harian?.hari || null,
           jamMulai: harian?.jam_awal || null,
           jamSelesai: harian?.jam_akhir || null,
         };
       });
 
-      this.saveJadwalToFile(merged, this.filename);
-
+      this.data = merged;
       return merged;
     } catch (error) {
       console.error("Error mergeJadwal:", error.message);
-      return [];
-    }
-  };
-  getJadwalJson = async () => {
-    const data = await fs.promises.readFile(this.filename, "utf-8");
-    const jadwal = JSON.parse(data);
-    try {
-      return jadwal;
-    } catch (parseErr) {
-      console.error("Gagal parsing file jadwal:", parseErr);
       return [];
     }
   };

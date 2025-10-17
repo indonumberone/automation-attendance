@@ -30,8 +30,7 @@ export class Login {
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
           Dnt: "1",
           "Upgrade-Insecure-Requests": "1",
-          "Sec-Ch-Ua":
-            '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"',
+          "Sec-Ch-Ua": '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"',
           "Sec-Ch-Ua-Mobile": "?0",
           "Sec-Fetch-Site": "same-origin",
           "Sec-Fetch-Mode": "navigate",
@@ -46,9 +45,7 @@ export class Login {
 
       // console.log(response.headers);
       if (response.headers["set-cookie"]) {
-        this.PHPSESSID = response.headers["set-cookie"][0]
-          .split(";")[0]
-          .split("=")[1];
+        this.PHPSESSID = response.headers["set-cookie"][0].split(";")[0].split("=")[1];
         console.log("PHPSESSID:", this.PHPSESSID);
         return this.PHPSESSID;
       } else {
@@ -73,9 +70,7 @@ export class Login {
         }
       );
 
-      this.JSESSIONID = response.headers["set-cookie"][0]
-        .split(";")[0]
-        .split("=")[1];
+      this.JSESSIONID = response.headers["set-cookie"][0].split(";")[0].split("=")[1];
 
       const $ = cheerio.load(response.data);
       this.LT = $("input[name=lt]").val();
@@ -136,11 +131,7 @@ export class Login {
       console.log("Login response OK");
       return true;
     } catch (error) {
-      console.error(
-        "Error postLoginEthol:",
-        error.response?.status,
-        error.message
-      );
+      console.error("Error postLoginEthol:", error.response?.status, error.message);
       return false;
     }
   };
@@ -165,9 +156,7 @@ export class Login {
               "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
           },
         });
-        this.token = getToken.data.match(
-          /localStorage\.setItem\('token', '([^']+)'/
-        )[1];
+        this.token = getToken.data.match(/localStorage\.setItem\('token', '([^']+)'/)[1];
         if (!this.token) {
           throw new Error("Gagal mendapatkan token dari localStorage");
         }
@@ -190,8 +179,7 @@ export class Login {
           Accept: "application/json, text/plain, */*",
           Token: this.token,
           Referer: `${URL_ETHOL}/`,
-          "Sec-Ch-Ua":
-            '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"',
+          "Sec-Ch-Ua": '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"',
           "Sec-Ch-Ua-Platform": '"Linux"',
           "Sec-Ch-Ua-Mobile": "?0",
           Dnt: "1",
@@ -219,26 +207,25 @@ export class Login {
       return false;
     }
   };
+
   getAuth = async () => {
     try {
-      if (!(await this.#getPHPSESSID()))
-        throw new Error("Gagal mendapatkan PHPSESSID");
+      if (!(await this.#getPHPSESSID())) throw new Error("Gagal mendapatkan PHPSESSID");
       console.log("✅ Berhasil mendapatkan PHPSESSID");
-      if (!(await this.#getLoginPage()))
-        throw new Error("Gagal mendapatkan halaman login");
+
+      if (!(await this.#getLoginPage())) throw new Error("Gagal mendapatkan halaman login");
       console.log("✅ Berhasil mendapatkan halaman login");
 
       if (!(await this.#postLoginEthol()))
         throw new Error("Gagal login (username/password atau lt salah)");
       console.log("✅ Berhasil login (CASTGC didapat)");
 
-      if (!(await this.#getCas()))
-        throw new Error("Gagal akses service dengan ST");
+      if (!(await this.#getCas())) throw new Error("Gagal akses service dengan ST");
       console.log("✅ Berhasil akses ke ethol.pens.ac.id pakai ST");
 
-      if (!(await this.#getvalidateToken()))
-        throw new Error("Gagal validasi token");
+      if (!(await this.#getvalidateToken())) throw new Error("Gagal validasi token");
       console.log("✅ Berhasil validasi token");
+
       return this;
     } catch (err) {
       console.error("❌", err.message);
