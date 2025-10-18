@@ -31,6 +31,14 @@ function todayId() {
   return `${y}-${m}-${d}`; // YYYY-MM-DD
 }
 
+function randomDelay(min, max) {
+  const randomMinutes = Math.random() * (max - min) + min;
+  const delayMs = randomMinutes * 60 * 1000;
+  console.log(`[RANDOM_DELAY] tunggu ${randomMinutes.toFixed(2)} menit`);
+
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
 async function withTokenRefresh(login, apiCall) {
   try {
     return await apiCall();
@@ -57,7 +65,7 @@ const state = {
   done: false,
 
   running: false, // mutex anti overlap
-  highFreqEnabled: false, // mode 3 menit
+  highFreqEnabled: false, // mode 5 menit
   highFreqJob: null,
 };
 
@@ -171,9 +179,11 @@ async function normalTick() {
       console.log(
         `[KELAS] Sedang kuliah: ${cur.matakuliah.nama} (${cur.jamMulai}–${cur.jamSelesai})`
       );
-      startHighFreq(); // hidupkan mode 3 menit
+      randomDelay(0, 4);
+      startHighFreq(); // hidupkan mode 5 menit
     } else {
       stopHighFreq(); // pastikan mati jika tidak ada kelas
+      randomDelay(0, 10);
       console.log("[TICK] Tidak ada kelas saat ini. Check Absen di luar jam matkul");
       state.done = false;
       await tryAbsenForClass();
@@ -189,17 +199,17 @@ async function highFreqTick() {
   if (state.running) return console.log("[HF] Skip (running).");
   state.running = true;
   try {
-    console.log("[HF] mode 3 menit berjalan");
+    console.log("[HF] mode 5 menit berjalan");
     const list = state.jadwalToday;
     const cur = currentClass(list);
     if (!cur) {
-      console.log("[HF] Kelas berakhir. Matikan mode 3 menit.");
+      console.log("[HF] Kelas berakhir. Matikan mode 5 menit.");
       state.done = false;
       return stopHighFreq();
     }
     const res = await tryAbsenForClass();
     if (res.done) {
-      console.log("[HF] Presensi terpenuhi. Matikan mode 3 menit.");
+      console.log("[HF] Presensi terpenuhi. Matikan mode 5 menit.");
       state.done = true;
       stopHighFreq();
     }
@@ -213,8 +223,8 @@ async function highFreqTick() {
 function startHighFreq() {
   if (state.highFreqEnabled) return;
   state.highFreqEnabled = true;
-  state.highFreqJob = cron.schedule("*/3 * * * *", () => highFreqTick(), { timezone: TZ });
-  console.log("[SCHED] High-frequency ON (*/3 menit).");
+  state.highFreqJob = cron.schedule("*/5 * * * *", () => highFreqTick(), { timezone: TZ });
+  console.log("[SCHED] High-frequency ON (*/5 menit).");
 }
 
 function stopHighFreq() {
@@ -229,7 +239,7 @@ function stopHighFreq() {
 }
 
 /** ==== Cron utama: tiap 15 menit pada 08–17 (WIB) ==== */
-const normalJob = cron.schedule("*/15 8-17 * * *", () => normalTick(), {
+const normalJob = cron.schedule("*/15 8-17 * * 1-7", () => normalTick(), {
   timezone: TZ,
   scheduled: false,
 });
