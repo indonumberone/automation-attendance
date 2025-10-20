@@ -62,6 +62,7 @@ const state = {
   presensi: null,
 
   jadwalToday: [],
+  today_id: "",
   done: false,
 
   running: false, // mutex anti overlap
@@ -82,6 +83,7 @@ async function init() {
 
   try {
     state.jadwalToday = await getJadwalToday();
+    state.today_id = todayId();
   } catch (error) {
     console.error("❌ gagal getJadwalToday :", error);
   }
@@ -171,6 +173,10 @@ async function normalTick() {
   if (state.running) return console.log("[TICK] Skip (running).");
   state.running = true;
   try {
+    if (state.today_id != todayId()) {
+      state.jadwalToday = await getJadwalToday();
+      state.today_id = todayId();
+    }
     const list = state.jadwalToday;
     const cur = currentClass(list);
 
