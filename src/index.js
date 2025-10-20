@@ -185,7 +185,6 @@ async function normalTick() {
       console.log(
         `[KELAS] Sedang kuliah: ${cur.matakuliah.nama} (${cur.jamMulai}–${cur.jamSelesai})`
       );
-      await randomDelay(0, 4);
       startHighFreq(); // hidupkan mode 5 menit
     } else {
       stopHighFreq(); // pastikan mati jika tidak ada kelas
@@ -213,6 +212,7 @@ async function highFreqTick() {
       state.done = false;
       return stopHighFreq();
     }
+    await randomDelay(0, 4);
     const res = await tryAbsenForClass();
     if (res.done) {
       console.log("[HF] Presensi terpenuhi. Matikan mode 5 menit.");
