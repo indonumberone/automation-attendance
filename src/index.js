@@ -62,6 +62,7 @@ const state = {
   presensi: null,
 
   jadwalToday: [],
+  today_id: "",
   done: false,
 
   running: false, // mutex anti overlap
@@ -82,6 +83,7 @@ async function init() {
 
   try {
     state.jadwalToday = await getJadwalToday();
+    state.today_id = todayId();
   } catch (error) {
     console.error("❌ gagal getJadwalToday :", error);
   }
@@ -135,14 +137,15 @@ async function tryAbsenForClass() {
   const infoPresensi = await withTokenRefresh(state.login, () =>
     state.presensi.lastKulliah(state.login.ST, state.login.token, noMatkul, jenisSchemaMk)
   );
-  if (!infoPresensi?.open) {
-    console.log(`[PRESENSI] Belum dibuka: ${matkul.matakuliah.nama}`);
-    return { done: false, reason: "not_open" };
-  }
 
   if (await alreadySubmittedToday(noMatkul, jenisSchemaMk, infoPresensi.key)) {
     console.log("[PRESENSI] Sudah melakukan presensi.");
     return { done: true, reason: "already_submitted" };
+  }
+
+  if (!infoPresensi?.open) {
+    console.log(`[PRESENSI] Belum dibuka: ${matkul.matakuliah.nama}`);
+    return { done: false, reason: "not_open" };
   }
 
   const push = await withTokenRefresh(state.login, () =>
@@ -171,6 +174,10 @@ async function normalTick() {
   if (state.running) return console.log("[TICK] Skip (running).");
   state.running = true;
   try {
+    if (state.today_id != todayId()) {
+      state.jadwalToday = await getJadwalToday();
+      state.today_id = todayId();
+    }
     const list = state.jadwalToday;
     const cur = currentClass(list);
 
@@ -179,7 +186,6 @@ async function normalTick() {
       console.log(
         `[KELAS] Sedang kuliah: ${cur.matakuliah.nama} (${cur.jamMulai}–${cur.jamSelesai})`
       );
-      await randomDelay(0, 4);
       startHighFreq(); // hidupkan mode 5 menit
     } else {
       stopHighFreq(); // pastikan mati jika tidak ada kelas
@@ -207,6 +213,7 @@ async function highFreqTick() {
       state.done = false;
       return stopHighFreq();
     }
+    await randomDelay(0, 4);
     const res = await tryAbsenForClass();
     if (res.done) {
       console.log("[HF] Presensi terpenuhi. Matikan mode 5 menit.");
@@ -238,8 +245,8 @@ function stopHighFreq() {
   console.log("[SCHED] High-frequency OFF.");
 }
 
-/** ==== Cron utama: tiap 15 menit pada 08–17 (WIB) ==== */
-const normalJob = cron.schedule("*/15 8-17 * * 1-5", () => normalTick(), {
+/** ==== Cron utama: tiap 15 menit pada 07–17 (WIB) ==== */
+const normalJob = cron.schedule("*/15 7-17 * * 1-5", () => normalTick(), {
   timezone: TZ,
   scheduled: false,
 });
@@ -249,7 +256,7 @@ async function bootstrap() {
   await init();
   await normalTick(); // kick-off sekali saat start
   normalJob.start();
-  console.log("[SCHED] Cron 15-menit (08–17) aktif. TZ:", TZ);
+  console.log("[SCHED] Cron 15-menit (07–17) aktif. TZ:", TZ);
 }
 
 function shutdown() {
