@@ -137,14 +137,15 @@ async function tryAbsenForClass() {
   const infoPresensi = await withTokenRefresh(state.login, () =>
     state.presensi.lastKulliah(state.login.ST, state.login.token, noMatkul, jenisSchemaMk)
   );
-  if (!infoPresensi?.open) {
-    console.log(`[PRESENSI] Belum dibuka: ${matkul.matakuliah.nama}`);
-    return { done: false, reason: "not_open" };
-  }
 
   if (await alreadySubmittedToday(noMatkul, jenisSchemaMk, infoPresensi.key)) {
     console.log("[PRESENSI] Sudah melakukan presensi.");
     return { done: true, reason: "already_submitted" };
+  }
+
+  if (!infoPresensi?.open) {
+    console.log(`[PRESENSI] Belum dibuka: ${matkul.matakuliah.nama}`);
+    return { done: false, reason: "not_open" };
   }
 
   const push = await withTokenRefresh(state.login, () =>
@@ -244,8 +245,8 @@ function stopHighFreq() {
   console.log("[SCHED] High-frequency OFF.");
 }
 
-/** ==== Cron utama: tiap 15 menit pada 08–17 (WIB) ==== */
-const normalJob = cron.schedule("*/15 8-17 * * 1-5", () => normalTick(), {
+/** ==== Cron utama: tiap 15 menit pada 07–17 (WIB) ==== */
+const normalJob = cron.schedule("*/15 7-17 * * 1-5", () => normalTick(), {
   timezone: TZ,
   scheduled: false,
 });
@@ -255,7 +256,7 @@ async function bootstrap() {
   await init();
   await normalTick(); // kick-off sekali saat start
   normalJob.start();
-  console.log("[SCHED] Cron 15-menit (08–17) aktif. TZ:", TZ);
+  console.log("[SCHED] Cron 15-menit (07–17) aktif. TZ:", TZ);
 }
 
 function shutdown() {
