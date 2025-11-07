@@ -6,7 +6,15 @@ import { Presensi } from "./lib/Presensi.js";
 import axios from "axios";
 
 const TZ = "Asia/Jakarta";
-const DAYS_ID = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jum'at", "Sabtu"];
+const DAYS_ID = [
+  "Minggu",
+  "Senin",
+  "Selasa",
+  "Rabu",
+  "Kamis",
+  "Jum'at",
+  "Sabtu",
+];
 
 axios.interceptors.request.use((config) => {
   console.log(`[AXIOS] ${config.method?.toUpperCase()} ${config.url}`);
@@ -25,16 +33,28 @@ function nowHHMM() {
 }
 
 function todayId() {
-  const y = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric" }).format(new Date());
-  const m = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, month: "2-digit" }).format(new Date());
-  const d = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, day: "2-digit" }).format(new Date());
+  const y = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+  }).format(new Date());
+  const m = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    month: "2-digit",
+  }).format(new Date());
+  const d = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    day: "2-digit",
+  }).format(new Date());
   return `${y}-${m}-${d}`; // YYYY-MM-DD
 }
 
 function randomDelay(min, max) {
   const randomMinutes = Math.random() * (max - min) + min;
   const delayMs = randomMinutes * 60 * 1000;
-  console.log(`[RANDOM_DELAY] tunggu ${randomMinutes.toFixed(2)} menit`);
+  const delaySeconds = (delayMs / 1000).toFixed(1);
+  console.log(
+    `[RANDOM_DELAY] tunggu ${randomMinutes.toFixed(2)} menit (${delaySeconds}s)`
+  );
 
   return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
@@ -55,6 +75,20 @@ async function withTokenRefresh(login, apiCall) {
   }
 }
 
+// Wrapper untuk timeout API calls
+async function withTimeout(promise, timeoutMs = 30000, operation = "API call") {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(
+        () =>
+          reject(new Error(`Timeout: ${operation} exceeded ${timeoutMs}ms`)),
+        timeoutMs
+      )
+    ),
+  ]);
+}
+
 /** ==== Global state ==== */
 const state = {
   login: null,
@@ -66,6 +100,7 @@ const state = {
   done: false,
 
   running: false, // mutex anti overlap
+  runningStartTime: 0, // timestamp kapan running dimulai
   highFreqEnabled: false, // mode 5 menit
   highFreqJob: null,
 };
@@ -91,10 +126,27 @@ async function init() {
 
 /** ==== Domain helpers ==== */
 async function getJadwalToday() {
+  console.log("[DEBUG] Mengambil jadwal hari ini...");
   const data = await state.jadwal.populate(state.login.ST, state.login.token);
-  if (!Array.isArray(data)) return [];
+  if (!Array.isArray(data)) {
+    console.log("[DEBUG] Data jadwal bukan array");
+    return [];
+  }
   const hari = DAYS_ID[new Date().getDay()];
-  return data.filter((j) => j.hari === hari && j.jamMulai && j.jamSelesai);
+  const filtered = data.filter(
+    (j) => j.hari === hari && j.jamMulai && j.jamSelesai
+  );
+  console.log(
+    `[DEBUG] Hari: ${hari}, Total jadwal hari ini: ${filtered.length}`
+  );
+  filtered.forEach((j, idx) => {
+    console.log(
+      `[DEBUG]   ${idx + 1}. ${j.matakuliah.nama} (${j.jamMulai}–${
+        j.jamSelesai
+      }) | Nomor: ${j.nomor}`
+    );
+  });
+  return filtered;
 }
 
 function isNowInRange(j) {
@@ -103,10 +155,23 @@ function isNowInRange(j) {
 }
 
 function currentClass(jadwalHariIni) {
-  return jadwalHariIni.find(isNowInRange) || null;
+  const now = nowHHMM();
+  console.log(`[DEBUG] Waktu sekarang: ${now}`);
+  const cur = jadwalHariIni.find(isNowInRange);
+  if (cur) {
+    console.log(
+      `[DEBUG] Kelas aktif: ${cur.matakuliah.nama} (${cur.jamMulai}–${cur.jamSelesai}) | Nomor: ${cur.nomor}`
+    );
+  } else {
+    console.log(`[DEBUG] Tidak ada kelas yang sedang berjalan`);
+  }
+  return cur || null;
 }
 
 async function alreadySubmittedToday(nomor, jenisSchemaMk, keyPresensi) {
+  console.log(
+    `[DEBUG] Cek riwayat presensi untuk nomor: ${nomor}, key: ${keyPresensi}`
+  );
   const riwayatPresensi = await withTokenRefresh(state.login, () =>
     state.presensi.getRiwayatPresensi(
       state.login.ST,
@@ -118,24 +183,104 @@ async function alreadySubmittedToday(nomor, jenisSchemaMk, keyPresensi) {
   );
 
   const today = new Date().toISOString().split("T")[0];
+  console.log(`[DEBUG] Tanggal hari ini: ${today}`);
   const match = riwayatPresensi.find((r) => {
     const [dd, mm, yyyy] = r.tanggal.split(" ")[0].split("-");
     const tanggalRiwayat = `${yyyy}-${mm}-${dd}`;
     return tanggalRiwayat === today && r.key === keyPresensi;
   });
+  console.log(`[DEBUG] Sudah presensi hari ini? ${match ? "YA" : "TIDAK"}`);
   return match;
 }
 
-async function tryAbsenForClass() {
-  const notifikasi = await withTokenRefresh(state.login, () =>
-    state.presensi.getNotifikasi(state.login.ST, state.login.token)
+async function tryAbsenForClass(kelasSekarang = null) {
+  console.log(`[DEBUG] === tryAbsenForClass dipanggil ===`);
+  console.log(
+    `[DEBUG] Kelas sekarang: ${
+      kelasSekarang
+        ? kelasSekarang.matakuliah.nama +
+          " (nomor: " +
+          kelasSekarang.nomor +
+          ")"
+        : "TIDAK ADA"
+    }`
   );
 
-  const [noMatkul, jenisSchemaMk] = notifikasi[0].dataTerkait.split("-");
+  const notifikasi = await withTimeout(
+    withTokenRefresh(state.login, () =>
+      state.presensi.getNotifikasi(state.login.ST, state.login.token)
+    ),
+    15000,
+    "getNotifikasi"
+  );
+
+  // Jika tidak ada notifikasi presensi
+  if (!notifikasi || notifikasi.length === 0) {
+    console.log("[PRESENSI] Tidak ada notifikasi presensi.");
+    return { done: false, reason: "no_notification" };
+  }
+
+  console.log(`[DEBUG] Total notifikasi: ${notifikasi.length}`);
+  notifikasi.forEach((n, idx) => {
+    const [noMatkul, schema] = n.dataTerkait.split("-");
+    console.log(
+      `[DEBUG]   ${idx + 1}. Notifikasi nomor: ${noMatkul}, schema: ${schema}`
+    );
+  });
+
+  // Jika ada kelas yang sedang berjalan, validasi bahwa notifikasi untuk kelas tersebut
+  let targetNotif = notifikasi[0];
+  if (kelasSekarang) {
+    console.log(
+      `[DEBUG] Mencari notifikasi untuk kelas nomor: ${kelasSekarang.nomor}`
+    );
+    targetNotif = notifikasi.find((n) => {
+      const [noMatkul] = n.dataTerkait.split("-");
+      return noMatkul == kelasSekarang.nomor;
+    });
+
+    if (!targetNotif) {
+      console.log(
+        `[PRESENSI] Tidak ada notifikasi untuk kelas saat ini: ${kelasSekarang.matakuliah.nama}`
+      );
+      return { done: false, reason: "no_notification_for_current_class" };
+    }
+    console.log(
+      `[DEBUG] Target notifikasi ditemukan untuk kelas: ${kelasSekarang.matakuliah.nama}`
+    );
+  } else {
+    console.log(`[DEBUG] Tidak ada kelas aktif, gunakan notifikasi pertama`);
+  }
+
+  const [noMatkul, jenisSchemaMk] = targetNotif.dataTerkait.split("-");
+  console.log(
+    `[DEBUG] Target notifikasi: nomor=${noMatkul}, schema=${jenisSchemaMk}`
+  );
+
   const matkul = state.jadwal.data.find((j) => j.nomor == noMatkul);
 
+  if (!matkul) {
+    console.log(
+      `[PRESENSI] Matkul dengan nomor ${noMatkul} tidak ditemukan di jadwal.`
+    );
+    return { done: false, reason: "matkul_not_found" };
+  }
+
+  console.log(
+    `[PRESENSI] Mencoba presensi untuk: ${matkul.matakuliah.nama} (nomor: ${noMatkul})`
+  );
+
   const infoPresensi = await withTokenRefresh(state.login, () =>
-    state.presensi.lastKulliah(state.login.ST, state.login.token, noMatkul, jenisSchemaMk)
+    state.presensi.lastKulliah(
+      state.login.ST,
+      state.login.token,
+      noMatkul,
+      jenisSchemaMk
+    )
+  );
+
+  console.log(
+    `[DEBUG] Info presensi - open: ${infoPresensi?.open}, key: ${infoPresensi?.key}`
   );
 
   if (await alreadySubmittedToday(noMatkul, jenisSchemaMk, infoPresensi.key)) {
@@ -147,6 +292,8 @@ async function tryAbsenForClass() {
     console.log(`[PRESENSI] Belum dibuka: ${matkul.matakuliah.nama}`);
     return { done: false, reason: "not_open" };
   }
+
+  console.log(`[DEBUG] Presensi terbuka! Akan submit presensi...`);
 
   const push = await withTokenRefresh(state.login, () =>
     state.presensi.sumbitPresensi(
@@ -171,66 +318,157 @@ async function tryAbsenForClass() {
 
 /** ==== Schedulers ==== */
 async function normalTick() {
-  if (state.running) return console.log("[TICK] Skip (running).");
+  const tickStartTime = Date.now();
+  console.log("\n[TICK] ========== normalTick() dijalankan ==========");
+  console.log(
+    `[TICK] State - done: ${state.done}, highFreq: ${state.highFreqEnabled}, running: ${state.running}`
+  );
+
+  if (state.running) {
+    console.log(
+      "[TICK] Skip (running). Sudah berjalan sejak:",
+      tickStartTime - state.runningStartTime,
+      "ms"
+    );
+    // Safety: Reset running jika stuck lebih dari 5 menit
+    if (Date.now() - state.runningStartTime > 5 * 60 * 1000) {
+      console.warn("[TICK] ⚠️ State running stuck > 5 menit! Force reset.");
+      state.running = false;
+    }
+    return;
+  }
+
   state.running = true;
+  state.runningStartTime = Date.now();
+
   try {
-    if (state.today_id != todayId()) {
+    const currentDate = todayId();
+    console.log(
+      `[DEBUG] Tanggal sekarang: ${currentDate}, state.today_id: ${state.today_id}`
+    );
+
+    if (state.today_id != currentDate) {
+      console.log("[DEBUG] Hari baru terdeteksi! Refresh jadwal...");
       state.jadwalToday = await getJadwalToday();
-      state.today_id = todayId();
+      state.today_id = currentDate;
+      state.done = false; // Reset status done untuk hari baru
     }
     const list = state.jadwalToday;
+    console.log(`[DEBUG] Total jadwal hari ini: ${list.length}`);
     const cur = currentClass(list);
 
     if (cur) {
-      if (state.done) return console.log("[TICK] Skip (Sudah Absen).");
+      // Ada kelas yang sedang berjalan
+      if (state.done) {
+        console.log("[TICK] Skip (Sudah Absen untuk kelas ini).");
+        state.running = false;
+        return;
+      }
       console.log(
         `[KELAS] Sedang kuliah: ${cur.matakuliah.nama} (${cur.jamMulai}–${cur.jamSelesai})`
       );
       startHighFreq(); // hidupkan mode 5 menit
     } else {
+      // Tidak ada kelas yang sedang berjalan
       stopHighFreq(); // pastikan mati jika tidak ada kelas
-      await randomDelay(0, 10);
-      console.log("[TICK] Tidak ada kelas saat ini. Check Absen di luar jam matkul");
-      state.done = false;
-      await tryAbsenForClass();
+      console.log("[TICK] Tidak ada kelas saat ini.");
+
+      // Check notifikasi presensi yang terbuka di luar jam jadwal
+      console.log("[TICK] Check notifikasi presensi di luar jam...");
+      try {
+        const res = await tryAbsenForClass(null); // null = tidak ada kelas aktif, cek semua notifikasi
+        if (res.done) {
+          console.log("[TICK] Berhasil presensi di luar jam jadwal.");
+          state.done = true;
+        } else {
+          console.log(
+            `[TICK] Tidak ada presensi yang perlu dilakukan (${res.reason}).`
+          );
+        }
+      } catch (err) {
+        console.error("[ERROR] tryAbsenForClass di luar jam:", err);
+      }
     }
   } catch (e) {
     console.error("[ERROR] normalTick:", e);
+    console.error("[ERROR] Stack trace:", e.stack);
   } finally {
     state.running = false;
+    const duration = Date.now() - tickStartTime;
+    console.log(`[TICK] Selesai dalam ${duration}ms`);
   }
 }
 
 async function highFreqTick() {
-  if (state.running) return console.log("[HF] Skip (running).");
+  const tickStartTime = Date.now();
+  console.log("\n[HF] ========== highFreqTick() dijalankan ==========");
+  console.log(
+    `[HF] State - done: ${state.done}, highFreq: ${state.highFreqEnabled}, running: ${state.running}`
+  );
+
+  if (state.running) {
+    console.log(
+      "[HF] Skip (running). Sudah berjalan sejak:",
+      tickStartTime - state.runningStartTime,
+      "ms"
+    );
+    // Safety: Reset running jika stuck lebih dari 5 menit
+    if (Date.now() - state.runningStartTime > 5 * 60 * 1000) {
+      console.warn("[HF] ⚠️ State running stuck > 5 menit! Force reset.");
+      state.running = false;
+    }
+    return;
+  }
+
   state.running = true;
+  state.runningStartTime = Date.now();
+
   try {
     console.log("[HF] mode 5 menit berjalan");
     const list = state.jadwalToday;
+    console.log(`[DEBUG] Total jadwal di highFreq: ${list.length}`);
     const cur = currentClass(list);
     if (!cur) {
       console.log("[HF] Kelas berakhir. Matikan mode 5 menit.");
       state.done = false;
-      return stopHighFreq();
+      stopHighFreq();
+      return;
     }
-    await randomDelay(0, 4);
-    const res = await tryAbsenForClass();
+    // Delay singkat untuk randomisasi (10-60 detik)
+    await randomDelay(0.15, 1); // 0.15-1 menit = 9-60 detik
+    // Pass kelas sekarang ke tryAbsenForClass agar hanya presensi untuk kelas ini
+    console.log(
+      `[DEBUG] Memanggil tryAbsenForClass dengan kelas: ${cur.matakuliah.nama}`
+    );
+    const res = await tryAbsenForClass(cur);
+    console.log(
+      `[DEBUG] Hasil tryAbsenForClass - done: ${res.done}, reason: ${res.reason}`
+    );
     if (res.done) {
       console.log("[HF] Presensi terpenuhi. Matikan mode 5 menit.");
       state.done = true;
       stopHighFreq();
+    } else {
+      console.log(
+        `[HF] Presensi belum berhasil (${res.reason}). Coba lagi nanti.`
+      );
     }
   } catch (e) {
     console.error("[ERROR] highFreqTick:", e);
+    console.error("[ERROR] Stack trace:", e.stack);
   } finally {
     state.running = false;
+    const duration = Date.now() - tickStartTime;
+    console.log(`[HF] Selesai dalam ${duration}ms`);
   }
 }
 
 function startHighFreq() {
   if (state.highFreqEnabled) return;
   state.highFreqEnabled = true;
-  state.highFreqJob = cron.schedule("*/5 * * * *", () => highFreqTick(), { timezone: TZ });
+  state.highFreqJob = cron.schedule("*/5 * * * *", () => highFreqTick(), {
+    timezone: TZ,
+  });
   console.log("[SCHED] High-frequency ON (*/5 menit).");
 }
 
@@ -253,10 +491,20 @@ const normalJob = cron.schedule("*/15 7-17 * * 1-5", () => normalTick(), {
 
 /** ==== Boot & Shutdown ==== */
 async function bootstrap() {
+  console.log("\n[APP] ========== BOOTSTRAP START ==========");
+  console.log(`[APP] Timezone: ${TZ}`);
+  console.log(`[APP] Waktu sekarang: ${nowHHMM()}`);
+  console.log(`[APP] Tanggal: ${todayId()}`);
+  console.log(`[APP] Hari: ${DAYS_ID[new Date().getDay()]}`);
+
   await init();
+  console.log("[APP] Init selesai. Login berhasil.");
+  console.log(`[APP] Total jadwal tersimpan: ${state.jadwal.data.length}`);
+
   await normalTick(); // kick-off sekali saat start
   normalJob.start();
   console.log("[SCHED] Cron 15-menit (07–17) aktif. TZ:", TZ);
+  console.log("[APP] ========== BOOTSTRAP COMPLETE ==========\n");
 }
 
 function shutdown() {
