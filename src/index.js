@@ -337,7 +337,7 @@ async function normalTick() {
   const tickStartTime = Date.now();
   console.log("\n[TICK] ========== normalTick() dijalankan ==========");
   console.log(
-    `[TICK] State - done: ${state.done}, highFreq: ${state.highFreqEnabled}, running: ${state.running}`
+    `[TICK] State - done: ${state.done}, highFreq: ${state.highFreqEnabled}, running: ${state.running}, lastClass: ${state.lastClassNomor}`
   );
 
   if (state.running) {
@@ -385,7 +385,7 @@ async function normalTick() {
         state.done = false;
       }
 
-      if (state.done) {
+      if (state.done && state.lastClassNomor === cur.nomor) {
         console.log("[TICK] Skip (Sudah Absen untuk kelas ini).");
         state.running = false;
         return;
@@ -397,6 +397,14 @@ async function normalTick() {
     } else {
       // Tidak ada kelas yang sedang berjalan
       stopHighFreq(); // pastikan mati jika tidak ada kelas
+
+      // Reset status done ketika tidak ada kelas aktif
+      // Ini memungkinkan sistem untuk check presensi di luar jam
+      if (state.done) {
+        console.log("[TICK] Reset status done karena tidak ada kelas aktif.");
+        state.done = false;
+      }
+
       console.log("[TICK] Tidak ada kelas saat ini.");
 
       // Check notifikasi presensi yang terbuka di luar jam jadwal
@@ -405,7 +413,8 @@ async function normalTick() {
         const res = await tryAbsenForClass(null); // null = tidak ada kelas aktif, cek semua notifikasi
         if (res.done) {
           console.log("[TICK] Berhasil presensi di luar jam jadwal.");
-          state.done = true;
+          // Tidak set state.done = true untuk presensi di luar jam
+          // Karena mungkin ada notifikasi presensi lain yang perlu diproses
         } else {
           console.log(
             `[TICK] Tidak ada presensi yang perlu dilakukan (${res.reason}).`
